@@ -9,34 +9,189 @@ import shutil
 import operator
 import warnings
 import math
-from dicom_contour.dose import ArrayVolume, build_dose_volume
-from scipy.interpolate import RegularGridInterpolator
 from IPython.display import display
+from dicom_contour.contour import get_ct_name_dict
+import uuid
+from scipy.interpolate import RegularGridInterpolator
 
-
-def get_ct_name_dict(path):
+class ArrayVolume(object):
+     def __init__(self, Origin = None, Pivot= None,\
+                  Vector_X= None, Vector_Y= None, Vector_Z = None,\
+                  Col_Spacing= None, Row_Spacing= None, Thickness = None,\
+                  Array_Volume = None, Data_Type = None, x = None, y = None, z = None, interpolating_function = None):
+        self.Origin = Origin
+        self.Pivot = Pivot
+        self.Vector_X = Vector_X
+        self.Vector_Y = Vector_Y
+        self.Vector_Z = Vector_Z
+        self.Col_Spacing = Col_Spacing
+        self.Row_Spacing = Row_Spacing
+        self.Thickness = Thickness
+        self.Array_Volume= Array_Volume
+        self.Data_Type = Data_Type
+        self.x = x
+        self.y = y
+        self.z = z
+        self.interpolating_function = interpolating_function
+        
+        
+def build_image_volume(folder_path):
+    image_volume = ArrayVolume()
+    file_list = finder_ct_image_file(folder_path)
+    init_image_ds= pydicom.dcmread(file_list[0])
+    col_spacing = init_image_ds.PixelSpacing[1]
+    row_spacing = init_image_ds.PixelSpacing[0]
+    slice_thick = init_image_ds.SliceThickness
+    start_position = dicom.dcmread(file_list[0]).ImagePositionPatient
+    origin = np.array(start_position)-\
+              np.array([col_spacing/2, row_spacing/2, slice_thick/2])
+    if finder_rt_plan_file(folder_path)=='No Plan File':
+        pivot = None
+    else:
+        pivot = None
+        
+        #pivot = dicom.dcmread(finder_rt_plan_file(folder_path))\
+        #    [0x300a,0xb0][0][0x300a,0x111][0][0x300a,0x12c].value
+    vector_x = [1,0,0]
+    vector_y = [0,1,0]
+    vector_z = [0,0,1]
+    data_type = 'uint'+str(init_image_ds.BitsAllocated)
+    image_volume_array = []
+    for frame in range(0, len(file_list)):
+        image_volume_array.append\
+            (dicom.dcmread(file_list[frame]).pixel_array)
+    image_volume_array = np.array(image_volume_array)
     
-    """
-    Get the dict for CT_name <----> CT reference number
-    """
-    if path[-1] != '/': path += '/'
-    # get .dcm contour file
-    fpaths = [path + f for f in os.listdir(path) if '.dcm' in f]
-    CT_name_dict = {}
-    for fpath in fpaths:
-        f = dicom.dcmread(fpath)
-        if f.Modality == 'CT':
-            ref = f.SOPInstanceUID
-            CT_name_dict[ref] = fpath  
-    
-    return CT_name_dict
-            
-    
+    image_volume = ArrayVolume(origin, pivot, vector_x, vector_y, vector_z,\
+                        col_spacing, row_spacing, slice_thick,
+                        image_volume_array, data_type)  
 
+    return image_volume  
 
-def get_contour_file(path):
+def build_dose_volume(folder_path):
+    dose_volume = ArrayVolume()
+    ds= dicom.dcmread(finder_rt_dose_file(folder_path))
+    col_spacing = ds.PixelSpacing[1]
+    row_spacing = ds.PixelSpacing[0]
+    slice_thick = ds.GridFrameOffsetVector[1]-ds.GridFrameOffsetVector[0]
+    image_position = ds.ImagePositionPatient
+    origin = np.array(image_position)-\
+              np.array([col_spacing/2, row_spacing/2, slice_thick/2])
+    pixel_spacing = ds.PixelSpacing
+    rows = ds.Rows
+    columns = ds.Columns
+    x = np.arange(columns)*pixel_spacing[0] + image_position[0]
+    y = np.arange(rows)*pixel_spacing[1] + image_position[1]
+    z = np.array(ds.GridFrameOffsetVector) + image_position[2]
+    
+    pivot = None
+    #pivot = dicom.dcmread(finder_rt_plan_file(folder_path))\
+    #        [0x300a,0xb0][0][0x300a,0x111][0][0x300a,0x12c].value
+    vector_x = [1,0,0]
+    vector_y = [0,1,0]
+    vector_z = [0,0,1]
+    dose_volume_array = np.array(ds.pixel_array)
+    data_type = 'uint'+str(ds.BitsStored)
+    interpolating_function = RegularGridInterpolator((z, x, y), dose_volume_array, bounds_error=False, fill_value=0)
+    
+    dose_volume = ArrayVolume(origin, pivot, vector_x, vector_y, vector_z,\
+                        col_spacing, row_spacing, slice_thick,
+                        dose_volume_array, data_type,x,y,z, interpolating_function)  
+
+    return dose_volume        
+        
+        
+        
+        
+def finder_ct_image_file(folder_path):
+    """CT Image Storage files Finder
+        Locate the CT Image Storage files in the patient folder.
+        Args:
+            folder_path: The path to the patient folder.
+        Returns:
+            Return a list of the path to the CT Image Storage files.
     """
-    Get contour file from a given path by searching for ROIContourSequence 
+    file_list = []
+    ct_image_file_list = []
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if filepath.endswith('.dcm'):
+            file_list.append(filepath)
+    for item in file_list:
+        if dicom.dcmread(item).SOPClassUID.name == 'CT Image Storage':
+            ct_image_file_list.append(item)
+    ct_image_file_list = sorted(ct_image_file_list, 
+                                key=lambda s:\
+                                dicom.dcmread(s).ImagePositionPatient[2])
+    return ct_image_file_list
+
+def finder_rt_plan_file(folder_path):
+    """RT Plan Storage file Finder
+        Locate the RT Structure Set Storage File in the patient folder.
+        Args:
+            folder_path: The path to the patient folder.
+        Returns:
+            If there is no dose plan file in the folder, returns a string. 
+            Else return the path to the RT Plan Storage file.
+    """
+    file_list = []
+    plan_file_path = 'No Plan File'
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if filepath.endswith('.dcm'):
+            file_list.append(filepath)
+    for item in file_list:
+        if dicom.dcmread(item).SOPClassUID.name == 'RT Plan Storage':
+            plan_file_path = item
+
+    return plan_file_path
+
+def finder_rt_structure_file(folder_path):
+    """RT Structure Set Storage file Finder
+        Locate the RT Structure Set Storage File in the patient folder.
+        Args:
+            folder_path: The path to the patient folder.
+        Returns:
+            If there is no structure file in the folder, returns a string. 
+            Else return the path to the RT Structure Set Storage file.
+    """
+    file_list = []
+    structure_file_path = 'No Structure File'
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if filepath.endswith('.dcm'):
+            file_list.append(filepath)
+    for item in file_list:
+        if dicom.dcmread(item).SOPClassUID.name == \
+            'RT Structure Set Storage':
+            structure_file_path = item
+
+    return structure_file_path
+
+def finder_rt_dose_file(folder_path):
+    """RT Dose Storage file Finder
+        Locate the RT Structure Set Storage File in the patient folder.
+        Args:
+            folder_path: The path to the patient folder.
+        Returns:
+            If there is no dose storage file in the folder, returns a string. 
+            Else return the path to the RT Dose Storage file.
+    """
+    file_list = []
+    dose_file_path = 'No Dose File'
+    for filename in os.listdir(folder_path):
+        filepath = os.path.join(folder_path, filename)
+        if filepath.endswith('.dcm'):
+            file_list.append(filepath)
+    for item in file_list:
+        if dicom.dcmread(item).SOPClassUID.name == 'RT Dose Storage':
+            dose_file_path = item
+
+    return dose_file_path        
+
+def get_dose_file(path):
+    """
+    Get dose file from a given path by searching for ROIContourSequence 
     inside dicom data structure.
     More information on ROIContourSequence available here:
     http://dicom.nema.org/medical/dicom/2016c/output/chtml/part03/sect_C.8.8.6.html
@@ -44,22 +199,22 @@ def get_contour_file(path):
     Inputs:
             path (str): path of the the directory that has DICOM files in it, e.g. folder of a single patient
     Return:
-        contour_file (str): name of the file with the contour
+        dose_file (str): name of the file with the contour
     """
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get .dcm contour file
     fpaths = [path + f for f in os.listdir(path) if '.dcm' in f]
     n = 0
-    contour_file = None
+    dose_file = None
     for fpath in fpaths:
         f = dicom.read_file(fpath)
-        if 'ROIContourSequence' in dir(f):
-            contour_file = fpath.split('/')[-1]
+        if f.Modality == 'RTDOSE':
+            dose_file = fpath.split('/')[-1]
             n += 1
-    if n > 1: warnings.warn("There are multiple contour files, returning the last one!")
-    if contour_file is None: print("No contour file found in directory")
-    return contour_file
+    if n > 1: warnings.warn("There are multiple dose files, returning the last one!")
+    if dose_file is None: print("No contour file found in directory")
+    return dose_file
 
 def get_roi_names(contour_data):
     """
@@ -271,75 +426,6 @@ def get_data(path, contour_file, index):
             contours.append(contour_arr)
 
     return np.array(images), np.array(contours)
-
-
-def get_ct_xyz(file_name):
-    ds = dicom.read_file(file_name)
-    img_arr = dicom.read_file(file_name).pixel_array
-    ct_pixel_spacing = ds.PixelSpacing
-    image_position = ds.ImagePositionPatient
-    ct_pixel_spacing = ds.PixelSpacing
-    col_spacing = ds.PixelSpacing[1]
-    row_spacing = ds.PixelSpacing[0]
-    slice_thick = ds.SliceThickness
-    columns = img_arr.shape[1]
-    rows = img_arr.shape[0]
-    origin = np.array(image_position)-np.array([col_spacing/2, row_spacing/2, slice_thick/2])
-    x_ct = np.arange(columns)*row_spacing+ image_position[0]
-    y_ct = np.arange(rows)*col_spacing + image_position[1]
-    z_ct = image_position[2]
-    return x_ct, y_ct, z_ct
-
-
-def get_dose_on_ct(path, contour_file, index):
-    """
-    Generate image array and contour array
-    Inputs:
-        path (str): path of the the directory that has DICOM files in it
-        contour_file: structure file
-        index (int): index of the structure
-    """
-    # get dose volume first
-    dose_vol = build_dose_volume(path)
-    
-    images = []
-    contours = []
-    dose = []
-    # handle `/` missing
-    if path[-1] != '/': path += '/'
-    # get contour file
-    # contour_file = get_contour_file(path)
-    # get slice orders
-    ordered_slices = slice_order(path)
-    # get contour dict
-    contour_dict = get_contour_dict(contour_file, path, index)
-    
-    dict_name = get_ct_name_dict(path)
-    
-    for k,v in ordered_slices:
-        # get dose sampled on the CT slice 
-        file_name = dict_name[k]
-        x_ct, y_ct, z_ct = get_ct_xyz(file_name)        
-        xx,yy,zz = np.meshgrid(x_ct,y_ct,z_ct)        
-        xyz = np.dstack((xx,yy,zz))
-        dose_plane = np.array(dose_vol.interpolating_function(xyz))
-        dose.append(dose_plane)
-        # get data from contour dict
-        if k in contour_dict:
-            images.append(contour_dict[k][0])
-            contours.append(contour_dict[k][1])
-        # get data from dicom.read_file
-        else:
-            file_name = dict_name[k]
-            img_arr = dicom.read_file(file_name).pixel_array           
-   #        img_arr = dicom.read_file(path + k + '.dcm').pixel_array
-            contour_arr = np.zeros_like(img_arr)
-            images.append(img_arr)
-            contours.append(contour_arr)
-
-    return np.array(images), np.array(contours), np.array(dose)
-
-
 
 def get_mask(path, contour_file, index, filled=True):
     """
