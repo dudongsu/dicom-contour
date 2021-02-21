@@ -10,9 +10,27 @@ import operator
 import warnings
 import math
 from IPython.display import display
-from dicom_contour.contour import get_ct_name_dict
 import uuid
 from scipy.interpolate import RegularGridInterpolator
+
+
+def get_ct_name_dict(path):
+    
+    """
+    Get the dict for CT_name <----> CT reference number
+    """
+    if path[-1] != '/': path += '/'
+    # get .dcm contour file
+    fpaths = [path + f for f in os.listdir(path) if '.dcm' in f]
+    CT_name_dict = {}
+    for fpath in fpaths:
+        f = dicom.dcmread(fpath)
+        if f.Modality == 'CT':
+            ref = f.SOPInstanceUID
+            CT_name_dict[ref] = fpath  
+    
+    return CT_name_dict
+
 
 class ArrayVolume(object):
      def __init__(self, Origin = None, Pivot= None,\
@@ -91,6 +109,7 @@ def build_dose_volume(folder_path):
     vector_y = [0,1,0]
     vector_z = [0,0,1]
     dose_volume_array = np.array(ds.pixel_array)
+    dose_volume_array = dose_volume_array * ds.DoseGridScaling
     data_type = 'uint'+str(ds.BitsStored)
     interpolating_function = RegularGridInterpolator((z, x, y), dose_volume_array, bounds_error=False, fill_value=0)
     

@@ -11,6 +11,7 @@ import warnings
 import math
 from dicom_contour.dose import ArrayVolume, build_dose_volume
 from scipy.interpolate import RegularGridInterpolator
+from PIL import Image, ImageDraw
 from IPython.display import display
 
 
@@ -130,7 +131,9 @@ def coord2pixels(contour_dataset, path, dict_name):
         cols.append(j)
     contour_arr = csc_matrix((np.ones_like(rows), (rows, cols)), dtype=np.int8, shape=(img_arr.shape[0], img_arr.shape[1])).toarray()
 
-    return img_arr, contour_arr, img_ID
+    contour_arr_filled = contour_arr
+
+    return img_arr, contour_arr, contour_arr_filled, img_ID
 
 
 def cfile2pixels(file, path, ROIContourSeq=0):
@@ -156,17 +159,22 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     RTV = f.ROIContourSequence[ROIContourSeq]
     # get contour datasets in a list
     contours = [contour for contour in RTV.ContourSequence]
-    img_contour_arrays = [coord2pixels(cdata, path, dict_name) for cdata in contours]  # list of img_arr, contour_arr, im_id
+    img_contour_arrays = [coord2pixels(cdata, path, dict_name) for cdata in contours]  # list of img_arr, contour_arr, contour_arr_flled, im_id
 
     # debug: there are multiple contours for the same image indepently
     # sum contour arrays and generate new img_contour_arrays
     contour_dict = defaultdict(int)
-    for im_arr, cntr_arr, im_id in img_contour_arrays:
+    for im_arr, cntr_arr, cntr_arr_filled, im_id in img_contour_arrays:
         contour_dict[im_id] += cntr_arr
+
+    contour_filled_dict = defaultdict(int)
+    for im_arr, cntr_arr,cntr_arr_filled, im_id in img_contour_arrays:
+        contour_filled_dict[im_id] += cntr_arr_filled
+    
     image_dict = {}
-    for im_arr, cntr_arr, im_id in img_contour_arrays:
+    for im_arr, cntr_arr, cntr_arr_filled, im_id in img_contour_arrays:
         image_dict[im_id] = im_arr
-    img_contour_arrays = [(image_dict[k], contour_dict[k], k) for k in image_dict]
+    img_contour_arrays = [(image_dict[k], contour_dict[k], contour_filled_dict[k], k) for k in image_dict]
 
     return img_contour_arrays
 
@@ -230,8 +238,8 @@ def get_contour_dict(contour_file, path, index):
     contour_list = cfile2pixels(contour_file, path, index)
 
     contour_dict = {}
-    for img_arr, contour_arr, img_id in contour_list:
-        contour_dict[img_id] = [img_arr, contour_arr]
+    for img_arr, contour_arr, contour_arr_filled, img_id in contour_list:
+        contour_dict[img_id] = [img_arr, contour_arr, contour_arr_filled]
 
     return contour_dict
 
@@ -245,6 +253,7 @@ def get_data(path, contour_file, index):
     """
     images = []
     contours = []
+    contours_filled = []
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get contour file
@@ -261,6 +270,7 @@ def get_data(path, contour_file, index):
         if k in contour_dict:
             images.append(contour_dict[k][0])
             contours.append(contour_dict[k][1])
+            contours_filled.append(contour_dict[k][2])
         # get data from dicom.read_file
         else:
             file_name = dict_name[k]
@@ -269,8 +279,9 @@ def get_data(path, contour_file, index):
             contour_arr = np.zeros_like(img_arr)
             images.append(img_arr)
             contours.append(contour_arr)
+            contours_filled.append(contour_arr)
 
-    return np.array(images), np.array(contours)
+    return np.array(images), np.array(contours), np.array(contours_filled)
 
 
 def get_ct_xyz(file_name):
@@ -320,9 +331,9 @@ def get_dose_on_ct(path, contour_file, index):
         # get dose sampled on the CT slice 
         file_name = dict_name[k]
         x_ct, y_ct, z_ct = get_ct_xyz(file_name)        
-        xx,yy,zz = np.meshgrid(x_ct,y_ct,z_ct)        
-        xyz = np.dstack((xx,yy,zz))
-        dose_plane = np.array(dose_vol.interpolating_function(xyz))
+        xx,yy,zz = np.meshgrid(y_ct,x_ct,z_ct)        
+        zxy = np.dstack((zz,yy,xx))
+        dose_plane = np.array(dose_vol.interpolating_function(zxy))
         dose.append(dose_plane)
         # get data from contour dict
         if k in contour_dict:
@@ -350,6 +361,7 @@ def get_mask(path, contour_file, index, filled=True):
         index (int): index of the structure
     """
     contours = []
+    dict_name = get_ct_name_dict(path)
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get slice orders
@@ -365,55 +377,28 @@ def get_mask(path, contour_file, index, filled=True):
             contours.append(y)
         # get data from dicom.read_file
         else:
-            img_arr = dicom.read_file(path + k + '.dcm').pixel_array
+            file_name = dict_name[k]
+            img_arr = dicom.read_file(file_name).pixel_array
+           # img_arr = dicom.read_file(path + k + '.dcm').pixel_array
             contour_arr = np.zeros_like(img_arr)
             contours.append(contour_arr)
 
     return np.array(contours)
 
 
-def fill_contour(contour_arr):
+def fill_contour_new(contour_arr_orignal):
     # get initial pixel positions
+    contour_arr = contour_arr_orignal.copy()
     pixel_positions = np.array([(i, j) for i, j in zip(np.where(contour_arr)[0], np.where(contour_arr)[1])])
-
-    # LEFT TO RIGHT SCAN
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[i].append((i, j))
-
-    for i in row_pixels:
-        pixels = row_pixels[i]
-        j_pos = [j for i, j in pixels]
-        for j in range(min(j_pos), max(j_pos)):
-            row_pixels[i].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-
-    # TOP TO BOTTOM SCAN
-    pixel_positions = pixels  # new positions added
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[j].append((i, j))
-
-    for j in row_pixels:
-        pixels = row_pixels[j]
-        i_pos = [i for i, j in pixels]
-        for i in range(min(i_pos), max(i_pos)):
-            row_pixels[j].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
+    width = np.shape(contour_arr)[0]
+    height = np.shape(contour_arr)[1] 
+    img = Image.new('L', (width, height), 0)
+    ImageDraw.Draw(img).polygon(polygon, outline=1, fill=1)
+    contour_arr = numpy.array(img)
+    
     return contour_arr
+
+
 
 
 def create_image_mask_files(path, contour_file, index, img_format='png'):
