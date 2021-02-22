@@ -10,6 +10,7 @@ import operator
 import warnings
 import math
 from dicom_contour.dose import ArrayVolume, build_dose_volume
+from dicom_contour.timer_class import Timer
 from scipy.interpolate import RegularGridInterpolator
 from PIL import Image, ImageDraw
 from IPython.display import display
@@ -152,7 +153,6 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     
     # get the CT id to file name dict
     dict_name = get_ct_name_dict(path)
-    display(dict_name)
     
     f = dicom.read_file(path + file)
     # index 0 means that we are getting RTV information
@@ -232,6 +232,8 @@ def get_contour_dict(contour_file, path, index):
     Returns:
         contour_dict: dictionary with 2d np.arrays
     """
+    t = Timer()
+    t.start()
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # img_arr, contour_arr, img_fname
@@ -240,6 +242,8 @@ def get_contour_dict(contour_file, path, index):
     contour_dict = {}
     for img_arr, contour_arr, contour_arr_filled, img_id in contour_list:
         contour_dict[img_id] = [img_arr, contour_arr, contour_arr_filled]
+    print('get_contour_dict time')
+    t.stop()
 
     return contour_dict
 
@@ -268,9 +272,11 @@ def get_data(path, contour_file, index):
     for k,v in ordered_slices:
         # get data from contour dict
         if k in contour_dict:
+            y = contour_dict[k][1]
+            y = scn.binary_fill_holes(y)
             images.append(contour_dict[k][0])
             contours.append(contour_dict[k][1])
-            contours_filled.append(contour_dict[k][2])
+            contours_filled.append(y)
         # get data from dicom.read_file
         else:
             file_name = dict_name[k]
@@ -285,6 +291,9 @@ def get_data(path, contour_file, index):
 
 
 def get_ct_xyz(file_name):
+    #t = Timer()
+    #t.start()
+
     ds = dicom.read_file(file_name)
     img_arr = dicom.read_file(file_name).pixel_array
     ct_pixel_spacing = ds.PixelSpacing
@@ -299,6 +308,9 @@ def get_ct_xyz(file_name):
     x_ct = np.arange(columns)*row_spacing+ image_position[0]
     y_ct = np.arange(rows)*col_spacing + image_position[1]
     z_ct = image_position[2]
+
+   # print('get_ct_xyz time is')
+   # t.stop()
     return x_ct, y_ct, z_ct
 
 
@@ -310,6 +322,7 @@ def get_dose_on_ct(path, contour_file, index):
         contour_file: structure file
         index (int): index of the structure
     """
+    
     # get dose volume first
     dose_vol = build_dose_volume(path)
     
@@ -327,6 +340,8 @@ def get_dose_on_ct(path, contour_file, index):
     
     dict_name = get_ct_name_dict(path)
     
+    t = Timer()
+    t.start()
     for k,v in ordered_slices:
         # get dose sampled on the CT slice 
         file_name = dict_name[k]
@@ -347,7 +362,8 @@ def get_dose_on_ct(path, contour_file, index):
             contour_arr = np.zeros_like(img_arr)
             images.append(img_arr)
             contours.append(contour_arr)
-
+    print('get_dose_on_ct time without get_contour_dict,with all slice get_ct_xyz')
+    t.stop()
     return np.array(images), np.array(contours), np.array(dose)
 
 

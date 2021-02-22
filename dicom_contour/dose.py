@@ -12,6 +12,7 @@ import math
 from IPython.display import display
 import uuid
 from scipy.interpolate import RegularGridInterpolator
+from dicom_contour.timer_class import Timer
 
 
 def get_ct_name_dict(path):
