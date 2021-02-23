@@ -128,8 +128,10 @@ def coord2pixels(contour_dataset, path, dict_name):
     rows = []
     cols = []
     for i, j in list(set(pixel_coords)):
-        rows.append(i)
-        cols.append(j)
+       # rows.append(i)
+       # cols.append(j)
+        rows.append(max(min(i,img_arr.shape[0]-1),0))
+        cols.append(max(min(j,img_arr.shape[0]-1),0))
     contour_arr = csc_matrix((np.ones_like(rows), (rows, cols)), dtype=np.int8, shape=(img_arr.shape[0], img_arr.shape[1])).toarray()
 
     contour_arr_filled = contour_arr
@@ -232,8 +234,8 @@ def get_contour_dict(contour_file, path, index):
     Returns:
         contour_dict: dictionary with 2d np.arrays
     """
-    t = Timer()
-    t.start()
+   # t = Timer()
+   # t.start()
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # img_arr, contour_arr, img_fname
@@ -242,8 +244,8 @@ def get_contour_dict(contour_file, path, index):
     contour_dict = {}
     for img_arr, contour_arr, contour_arr_filled, img_id in contour_list:
         contour_dict[img_id] = [img_arr, contour_arr, contour_arr_filled]
-    print('get_contour_dict time')
-    t.stop()
+   # print('get_contour_dict time')
+   # t.stop()
 
     return contour_dict
 
@@ -340,8 +342,8 @@ def get_dose_on_ct(path, contour_file, index):
     
     dict_name = get_ct_name_dict(path)
     
-    t = Timer()
-    t.start()
+   # t = Timer()
+   # t.start()
     for k,v in ordered_slices:
         # get dose sampled on the CT slice 
         file_name = dict_name[k]
@@ -362,8 +364,8 @@ def get_dose_on_ct(path, contour_file, index):
             contour_arr = np.zeros_like(img_arr)
             images.append(img_arr)
             contours.append(contour_arr)
-    print('get_dose_on_ct time without get_contour_dict,with all slice get_ct_xyz')
-    t.stop()
+  #  print('get_dose_on_ct time without get_contour_dict,with all slice get_ct_xyz')
+  #  t.stop()
     return np.array(images), np.array(contours), np.array(dose)
 
 

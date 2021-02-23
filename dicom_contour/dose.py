@@ -99,8 +99,8 @@ def build_dose_volume(folder_path):
     pixel_spacing = ds.PixelSpacing
     rows = ds.Rows
     columns = ds.Columns
-    x = np.arange(columns)*pixel_spacing[0] + image_position[0]
-    y = np.arange(rows)*pixel_spacing[1] + image_position[1]
+    x = np.arange(rows)*pixel_spacing[0] + image_position[0]
+    y = np.arange(columns)*pixel_spacing[1] + image_position[1]
     z = np.array(ds.GridFrameOffsetVector) + image_position[2]
     
     pivot = None
