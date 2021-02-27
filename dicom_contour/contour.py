@@ -275,7 +275,7 @@ def get_data(path, contour_file, index):
         # get data from contour dict
         if k in contour_dict:
             y = contour_dict[k][1]
-            y = scn.binary_fill_holes(y)
+            y = scn.binary_fill_holes(y) if y.max() == 1 else y
             images.append(contour_dict[k][0])
             contours.append(contour_dict[k][1])
             contours_filled.append(y)
